@@ -79,7 +79,7 @@ body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:var
 #drop-zone .icon{font-size:52px;opacity:.6;}
 #drop-zone .title{font-size:18px;font-weight:600;color:#ccc;}
 #drop-zone .sub{font-size:13px;color:var(--muted);text-align:center;line-height:1.8;}
-#pages{display:flex;flex-direction:column;align-items:center;padding:40px 40px;gap:48px;}
+#pages{display:flex;flex-direction:column;align-items:center;padding:40px 40px;gap:96px;}
 .page-block{display:flex;flex-direction:column;align-items:center;gap:6px;}
 .page-wrapper{position:relative;box-shadow:0 8px 40px rgba(0,0,0,.7);border-radius:2px;overflow:hidden;outline:1px solid var(--border);}
 .page-canvas{display:block;}
@@ -244,12 +244,32 @@ body.font-large #page-total { font-size: 14px !important; }
   flex-shrink: 0;
   background: var(--panel);
   border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#sidebar-header {
+  flex-shrink: 0;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+#sidebar-body {
+  flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 10px 8px;
+}
+#sidebar-body.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  align-content: start;
 }
 .thumb-item {
   cursor: pointer;
@@ -397,9 +417,9 @@ document.addEventListener('drop', e => e.preventDefault());
     <button class="btn" onclick="jumpToPage()" style="padding:4px 10px;font-size:12px;">이동</button>
   </div>
   <div id="zoom-group">
-    <button class="btn" onclick="changeZoom(-0.2)" style="padding:4px 9px;font-size:14px;" title="축소">−</button>
+    <button class="btn" onclick="changeZoom(-10)" style="padding:4px 9px;font-size:14px;" title="축소 (10%)">−</button>
     <span id="zoom-label" style="font-size:12px;font-weight:700;color:var(--muted);min-width:36px;text-align:center;">100%</span>
-    <button class="btn" onclick="changeZoom(0.2)" style="padding:4px 9px;font-size:14px;" title="확대">+</button>
+    <button class="btn" onclick="changeZoom(10)" style="padding:4px 9px;font-size:14px;" title="확대 (10%)">+</button>
   </div>
   <div id="toolbar-right">
     <button class="btn" onclick="openSettings()" style="border-color:#64748b;color:#94a3b8;">⚙️ 설정</button>
@@ -593,7 +613,12 @@ document.addEventListener('drop', e => e.preventDefault());
 <div id="pages" style="display:none"></div>
     </div><!-- /main-area -->
   <div id="resizer" title="드래그해서 크기 조절"></div>
-  <div id="sidebar"></div>
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <button id="thumb-cols-btn" onclick="toggleThumbCols()" title="썸네일 2열/1열 전환" style="background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;padding:2px 7px;line-height:1.4;">1열</button>
+    </div>
+    <div id="sidebar-body"></div>
+  </div>
 </div><!-- /app-layout -->
 <div id="toast"></div>
 
@@ -1294,19 +1319,29 @@ function updateBtns() {
 
 // ── 확대/축소 (CSS zoom — 재렌더 없음, 마스킹 유지) ──────────
 let cssZoom = 1.0;
-function changeZoom(delta) {
-  cssZoom = Math.max(0.25, Math.min(4.0, cssZoom + delta));
-  const pct = Math.round(cssZoom * 100);
+function changeZoom(deltaPct) {
+  let pct = Math.round(cssZoom * 100) + deltaPct;
+  pct = Math.round(pct / 10) * 10;          // 10% 단위로 스냅
+  pct = Math.max(10, Math.min(400, pct));   // 최소 10%, 최대 400%
+  cssZoom = pct / 100;
   document.getElementById('zoom-label').textContent = pct + '%';
   document.getElementById('pages').style.zoom = cssZoom;
 }
 
 // ── 썸네일 사이드바 ──────────────────────────────────────────
 let sidebarVisible = true;
+let thumbTwoCols = false;
 window.addEventListener('load', () => {
   setTheme('light');
 });
 
+function toggleThumbCols() {
+  thumbTwoCols = !thumbTwoCols;
+  const body = document.getElementById('sidebar-body');
+  body.classList.toggle('two-col', thumbTwoCols);
+  document.getElementById('thumb-cols-btn').textContent = thumbTwoCols ? '2열' : '1열';
+  if (pageData.length > 0) updateThumbnails();
+}
 function toggleSidebar() {
   sidebarVisible = !sidebarVisible;
   const sb = document.getElementById('sidebar');
@@ -1352,8 +1387,7 @@ async function updateSingleThumb(pd) {
   if (!item) { updateThumbnails(); return; }
   const tc = item.querySelector('.thumb-canvas');
   if (!tc) return;
-  const sbW = document.getElementById('sidebar').offsetWidth;
-  const thumbW = Math.max(60, sbW - 20);
+  const thumbW = getThumbW();
   const dpr = window.devicePixelRatio || 1;
   const thumbH = Math.round(pd.canvas.height * (thumbW / pd.canvas.width));
   tc.width = thumbW * dpr;
@@ -1373,8 +1407,13 @@ async function updateSingleThumb(pd) {
   }
 }
 
-async function updateThumbnails() {
+function getThumbW() {
   const sb = document.getElementById('sidebar');
+  const sbW = sb.offsetWidth;
+  return thumbTwoCols ? Math.max(40, Math.floor((sbW - 22) / 2)) : Math.max(60, sbW - 20);
+}
+async function updateThumbnails() {
+  const sb = document.getElementById('sidebar-body');
   if (!sidebarVisible || !pdfJsDoc) return;
   sb.innerHTML = '';
   for (const pd of pageData) {
@@ -1384,8 +1423,7 @@ async function updateThumbnails() {
     const tc = document.createElement('canvas');
     tc.className = 'thumb-canvas';
     const dpr = window.devicePixelRatio || 1;
-    const sbW = document.getElementById('sidebar').offsetWidth;
-    const thumbW = Math.max(60, sbW - 20);
+    const thumbW = getThumbW();
     const thumbScale = thumbW / pd.canvas.width;
     const thumbH = Math.round(pd.canvas.height * thumbScale);
     tc.width = thumbW * dpr;
@@ -1772,7 +1810,7 @@ initDragSelect();
 document.getElementById('main-area').addEventListener('wheel', e => {
   if (!e.ctrlKey) return;
   e.preventDefault();
-  changeZoom(e.deltaY < 0 ? 0.1 : -0.1);
+  changeZoom(e.deltaY < 0 ? 10 : -10);
 }, { passive: false });
 
 function setStatus(msg) { document.getElementById('status').textContent = msg; }
