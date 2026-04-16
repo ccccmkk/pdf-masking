@@ -79,7 +79,7 @@ body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:var
 #drop-zone .icon{font-size:52px;opacity:.6;}
 #drop-zone .title{font-size:18px;font-weight:600;color:#ccc;}
 #drop-zone .sub{font-size:13px;color:var(--muted);text-align:center;line-height:1.8;}
-#pages{display:flex;flex-direction:column;align-items:center;padding:40px 40px;gap:160px;}
+#pages{display:flex;flex-direction:column;align-items:center;padding:40px 40px;gap:12px;}
 .page-block{display:flex;flex-direction:column;align-items:center;gap:6px;}
 .page-wrapper{position:relative;box-shadow:0 8px 40px rgba(0,0,0,.7);border-radius:2px;overflow:hidden;outline:1px solid var(--border);}
 .page-canvas{display:block;}
@@ -267,11 +267,12 @@ body.font-large #page-total { font-size: 14px !important; }
   padding: 14px 8px;
 }
 #sidebar-body.two-col {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px 8px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  row-gap: 20px;
+  column-gap: 6px;
   align-content: start;
-  align-items: start;
+  align-items: flex-start;
 }
 .thumb-item {
   cursor: pointer;
@@ -1344,7 +1345,10 @@ function toggleThumbCols() {
   body.classList.toggle('two-col', thumbTwoCols);
   sidebar.style.width = thumbTwoCols ? '280px' : '140px';
   document.getElementById('thumb-cols-btn').textContent = thumbTwoCols ? '2열' : '1열';
-  if (pageData.length > 0) updateThumbnails();
+  // 브라우저 레이아웃 완료 후 너비 재계산
+  requestAnimationFrame(() => {
+    if (pageData.length > 0) updateThumbnails();
+  });
 }
 function toggleSidebar() {
   sidebarVisible = !sidebarVisible;
@@ -1412,9 +1416,11 @@ async function updateSingleThumb(pd) {
 }
 
 function getThumbW() {
-  const sb = document.getElementById('sidebar');
-  const sbW = sb.offsetWidth;
-  return thumbTwoCols ? Math.max(40, Math.floor((sbW - 22) / 2)) : Math.max(60, sbW - 20);
+  const body = document.getElementById('sidebar-body');
+  if (!body) return 120;
+  const innerW = body.clientWidth - 16; // 8px padding 양쪽 제외
+  if (thumbTwoCols) return Math.max(40, Math.floor((innerW - 6) / 2)); // 6px column-gap
+  return Math.max(60, innerW);
 }
 async function updateThumbnails() {
   const sb = document.getElementById('sidebar-body');
@@ -1428,6 +1434,7 @@ async function updateThumbnails() {
     tc.className = 'thumb-canvas';
     const dpr = window.devicePixelRatio || 1;
     const thumbW = getThumbW();
+    item.style.width = thumbW + 'px'; // flex-wrap 정확한 열 분배용
     const thumbScale = thumbW / pd.canvas.width;
     const thumbH = Math.round(pd.canvas.height * thumbScale);
     tc.width = thumbW * dpr;
