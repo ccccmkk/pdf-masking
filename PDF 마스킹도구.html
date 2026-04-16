@@ -87,6 +87,15 @@ body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:var
 .page-num{font-size:11px;color:var(--muted);}
 .page-block.selected .page-wrapper{outline:2px solid var(--accent);box-shadow:0 0 0 4px rgba(255,71,87,.2),0 8px 40px rgba(0,0,0,.7);}
 .page-block.selected .page-num{color:var(--accent);font-weight:700;}
+.page-sel-bar{display:flex;align-items:center;gap:6px;padding:4px 8px;cursor:pointer;user-select:none;background:rgba(0,0,0,.04);border-radius:2px 2px 0 0;width:100%;box-sizing:border-box;}
+.page-sel-bar:hover{background:rgba(255,71,87,.1);}
+.page-block.selected .page-sel-bar{background:rgba(255,71,87,.18);}
+.page-sel-num{font-size:11px;font-weight:600;color:var(--muted);flex:1;text-align:center;}
+.page-block.selected .page-sel-num{color:var(--accent);}
+.drag-handle{font-size:14px;color:var(--muted);cursor:grab;opacity:0.4;line-height:1;}
+.drag-handle:hover{opacity:1;}
+.page-block.drag-over-top{border-top:3px solid var(--accent);}
+.page-block.drag-over-bottom{border-bottom:3px solid var(--accent);}
 #sel-bar{background:rgba(255,71,87,.1);border-bottom:1px solid rgba(255,71,87,.3);padding:7px 18px;display:none;align-items:center;gap:8px;position:sticky;top:0;z-index:189;}
 #drag-sel-box{position:fixed;border:1.5px solid var(--accent);background:rgba(255,71,87,.1);pointer-events:none;z-index:150;display:none;}
 #toast{position:fixed;bottom:24px;right:24px;z-index:999;padding:12px 20px;background:var(--panel);border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);transform:translateY(80px);transition:transform .25s ease;pointer-events:none;}
@@ -243,6 +252,10 @@ body.font-large #page-total { font-size: 14px !important; }
   flex-shrink: 0;
 }
 .thumb-item:hover { border-color: var(--muted); }
+.thumb-item.selected { border-color: var(--accent); background: rgba(255,71,87,.1); }
+.thumb-item.selected .thumb-label { color: var(--accent); font-weight: 700; }
+.thumb-item.drag-over-top { box-shadow: 0 -3px 0 var(--accent); }
+.thumb-item.drag-over-bottom { box-shadow: 0 3px 0 var(--accent); }
 .thumb-item.active { border-color: var(--accent); }
 .thumb-canvas { display: block; width: 100%; height: auto; }
 .thumb-label {
@@ -632,6 +645,8 @@ let selType = 'solid'; // 'solid' | 'mosaic'
 let saveMode = 'secure'; // 'secure' | 'text'
 let selectedPages = new Set();
 let deletedPageNums = new Set();
+let lastSelectedPage = null;
+let draggedPageNum = null;
 
 // ── 파일 로드 ───────────────────────────────────────────
 document.getElementById('file-input').addEventListener('change', e => {
@@ -711,18 +726,28 @@ async function renderPage(pageNum) {
   overlay.className = 'overlay';
   overlay.width = viewport.width; overlay.height = viewport.height;
   wrapper.appendChild(canvas); wrapper.appendChild(overlay);
-  const label = document.createElement('div');
-  label.className = 'page-num';
-  label.textContent = pageNum + ' / ' + pdfJsDoc.numPages;
-  block.appendChild(wrapper); block.appendChild(label);
+  // 선택/순서변경 핸들바
+  const selBar = document.createElement('div');
+  selBar.className = 'page-sel-bar';
+  selBar.innerHTML = '<span class="drag-handle" title="드래그하여 순서 변경">⠿</span><span class="page-sel-num">' + pageNum + ' / ' + pdfJsDoc.numPages + '</span>';
+  selBar.addEventListener('mousedown', e => {
+    if (e.ctrlKey || e.shiftKey) { e.preventDefault(); e.stopPropagation(); handlePageClick(pageNum, e); }
+  });
+  selBar.addEventListener('click', e => { e.stopPropagation(); handlePageClick(pageNum, e); });
+  // 순서 변경 드래그 (핸들에서만 시작)
+  selBar.draggable = true;
+  selBar.addEventListener('dragstart', e => startDragPage(e, pageNum));
+  block.appendChild(selBar);
+  block.appendChild(wrapper);
+  // 드롭 대상
+  block.addEventListener('dragover', e => onDragOverPage(e, pageNum, 'main'));
+  block.addEventListener('drop', e => onDropPage(e, pageNum));
+  block.addEventListener('dragleave', e => { if (!block.contains(e.relatedTarget)) clearDragOverEl(block); });
   document.getElementById('pages').appendChild(block);
   await pdfPage.render({canvasContext: canvas.getContext('2d'), viewport}).promise;
   const idx = pageData.length;
   pageData.push({canvas, overlay, rects:[], pageNum, viewport, rotation:0});
   setupDrawing(overlay, idx);
-  block.addEventListener('mousedown', e => {
-    if (e.ctrlKey) { e.preventDefault(); e.stopPropagation(); togglePageSel(pageNum, true); }
-  });
 }
 
 // ── 드로잉 ───────────────────────────────────────────────
@@ -878,7 +903,7 @@ document.addEventListener('keydown', e => {
 async function saveRedacted() {
   setStatus('저장 중...'); document.getElementById('save-split').style.pointerEvents = 'none';
   try {
-    const allPages = Array.from({length: pdfJsDoc.numPages}, (_,i) => i+1).filter(n => !deletedPageNums.has(n));
+    const allPages = pageData.map(pd => pd.pageNum);
     const bytes = await buildPDF(allPages);
     // 파일 다운로드
     downloadPDF(bytes, 'masked_' + originalFileName + '.pdf');
@@ -925,7 +950,8 @@ async function reloadWithBaked(bytes) {
 async function saveAs(targetPages) {
   setStatus('저장 중...'); document.getElementById('save-split').style.pointerEvents = 'none';
   try {
-    const pages = targetPages || Array.from({length: pdfJsDoc.numPages}, (_,i) => i+1).filter(n => !deletedPageNums.has(n));
+    const availableNums = new Set(pageData.map(pd => pd.pageNum));
+    const pages = targetPages ? targetPages.filter(n => availableNums.has(n)) : pageData.map(pd => pd.pageNum);
     const bytes = await buildPDF(pages);
     const blob = new Blob([bytes], {type:'application/pdf'});
     const suggestedName = 'masked_' + originalFileName + '.pdf';
@@ -1201,7 +1227,7 @@ async function printPDF() {
   setStatus('인쇄 준비 중...');
   document.getElementById('print-btn').disabled = true;
   try {
-    const allPages = Array.from({length: pdfJsDoc.numPages}, (_,i) => i+1).filter(n => !deletedPageNums.has(n));
+    const allPages = pageData.map(pd => pd.pageNum);
     const pdfBytes = await buildPDF(allPages);
     // Blob URL로 새 탭 열고 자동 인쇄
     const blob = new Blob([pdfBytes], {type:'application/pdf'});
@@ -1253,18 +1279,18 @@ async function changeZoom(delta) {
     document.getElementById('zoom-label').textContent = Math.round((SCALE/BASE_SCALE)*100) + '%';
     return;
   }
-  // 회전 정보 보존
-  const savedRotations = {};
-  pageData.forEach(p => { savedRotations[p.pageNum] = p.rotation || 0; });
-  pageData.forEach(p => p.rects = []);
+  // 현재 순서·회전 보존 (삭제된 페이지 제외)
+  const savedOrder = pageData.map(p => ({pageNum: p.pageNum, rotation: p.rotation || 0}));
   history.length = 0;
   updateBtns();
-  // 전체 재렌더
+  selectedPages.clear(); updateSelUI();
+  // 전체 재렌더 (저장된 순서 그대로)
   const pagesEl = document.getElementById('pages');
   pagesEl.innerHTML = '';
   pageData = [];
-  for (let i = 1; i <= pdfJsDoc.numPages; i++) await renderPage(i);
+  for (const {pageNum} of savedOrder) await renderPage(pageNum);
   // 회전 복원 (마스킹 경고 없이)
+  const savedRotations = Object.fromEntries(savedOrder.map(s => [s.pageNum, s.rotation]));
   for (const pd of pageData) {
     const rot = savedRotations[pd.pageNum] || 0;
     if (rot !== 0) {
@@ -1395,9 +1421,17 @@ async function updateThumbnails() {
     label.textContent = pd.pageNum;
     item.appendChild(tc);
     item.appendChild(label);
-    item.onclick = () => {
+    item.classList.toggle('selected', selectedPages.has(pd.pageNum));
+    item.addEventListener('click', e => {
+      handlePageClick(pd.pageNum, e);
       document.getElementById('page-block-' + pd.pageNum)?.scrollIntoView({behavior:'smooth',block:'start'});
-    };
+    });
+    // 순서 변경 드래그
+    item.draggable = true;
+    item.addEventListener('dragstart', e => startDragPage(e, pd.pageNum));
+    item.addEventListener('dragover', e => onDragOverPage(e, pd.pageNum, 'thumb'));
+    item.addEventListener('drop', e => onDropPage(e, pd.pageNum));
+    item.addEventListener('dragleave', e => { if (!item.contains(e.relatedTarget)) clearDragOverEl(item); });
     sb.appendChild(item);
   }
 }
@@ -1518,13 +1552,23 @@ function applyCustomColor() {
   closeCustomColor();
 }
 // ── 다중 페이지 선택 ────────────────────────────────────────
-function togglePageSel(pn, ctrl) {
-  if (ctrl) {
+function handlePageClick(pn, e) {
+  if (e.shiftKey && lastSelectedPage !== null) {
+    const allNums = pageData.map(p => p.pageNum);
+    const fromIdx = allNums.indexOf(lastSelectedPage);
+    const toIdx = allNums.indexOf(pn);
+    if (fromIdx !== -1 && toIdx !== -1) {
+      const s = Math.min(fromIdx, toIdx), en = Math.max(fromIdx, toIdx);
+      allNums.slice(s, en + 1).forEach(n => selectedPages.add(n));
+    }
+  } else if (e.ctrlKey) {
     if (selectedPages.has(pn)) selectedPages.delete(pn);
     else selectedPages.add(pn);
+    lastSelectedPage = pn;
   } else {
     selectedPages.clear();
     selectedPages.add(pn);
+    lastSelectedPage = pn;
   }
   updateSelUI();
 }
@@ -1537,6 +1581,7 @@ function updateSelUI() {
     const b = document.getElementById('page-block-' + pd.pageNum);
     if (b) b.classList.toggle('selected', selectedPages.has(pd.pageNum));
   });
+  updateThumbSelUI();
   const bar = document.getElementById('sel-bar');
   if (selectedPages.size > 0) {
     bar.style.display = 'flex';
@@ -1544,6 +1589,12 @@ function updateSelUI() {
   } else {
     bar.style.display = 'none';
   }
+}
+function updateThumbSelUI() {
+  document.querySelectorAll('.thumb-item').forEach(item => {
+    const pn = parseInt(item.id.replace('thumb-', ''));
+    item.classList.toggle('selected', selectedPages.has(pn));
+  });
 }
 async function rotateSelected(deg) {
   if (!selectedPages.size) return;
@@ -1573,45 +1624,122 @@ async function deleteSelected() {
   if (sidebarVisible) updateThumbnails();
   toast(cnt + '개 페이지 삭제됨');
 }
+// ── 페이지 순서 변경 (드래그) ─────────────────────────────────
+function startDragPage(e, pn) {
+  draggedPageNum = pn;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', String(pn));
+  e.stopPropagation();
+}
+function onDragOverPage(e, pn, source) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  if (pn === draggedPageNum) return;
+  document.querySelectorAll('.drag-over-top, .drag-over-bottom').forEach(el => el.classList.remove('drag-over-top', 'drag-over-bottom'));
+  const el = document.getElementById((source === 'thumb' ? 'thumb-' : 'page-block-') + pn);
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  el.classList.add(e.clientY < rect.top + rect.height / 2 ? 'drag-over-top' : 'drag-over-bottom');
+}
+function onDropPage(e, targetPn) {
+  e.preventDefault();
+  document.querySelectorAll('.drag-over-top, .drag-over-bottom').forEach(el => el.classList.remove('drag-over-top', 'drag-over-bottom'));
+  if (!draggedPageNum || draggedPageNum === targetPn) { draggedPageNum = null; return; }
+  const rect = e.currentTarget.getBoundingClientRect();
+  const insertBefore = e.clientY < rect.top + rect.height / 2;
+  reorderPages(draggedPageNum, targetPn, insertBefore);
+  draggedPageNum = null;
+}
+function clearDragOverEl(el) {
+  el.classList.remove('drag-over-top', 'drag-over-bottom');
+}
+function reorderPages(fromPn, toPn, insertBefore) {
+  const fromIdx = pageData.findIndex(p => p.pageNum === fromPn);
+  const toIdx = pageData.findIndex(p => p.pageNum === toPn);
+  if (fromIdx === -1 || toIdx === -1) return;
+  const [moved] = pageData.splice(fromIdx, 1);
+  const newToIdx = pageData.findIndex(p => p.pageNum === toPn);
+  pageData.splice(insertBefore ? newToIdx : newToIdx + 1, 0, moved);
+  history = []; updateBtns();
+  const pagesEl = document.getElementById('pages');
+  const movedBlock = document.getElementById('page-block-' + fromPn);
+  const targetBlock = document.getElementById('page-block-' + toPn);
+  if (movedBlock && targetBlock) {
+    if (insertBefore) pagesEl.insertBefore(movedBlock, targetBlock);
+    else targetBlock.insertAdjacentElement('afterend', movedBlock);
+  }
+  if (sidebarVisible) updateThumbnails();
+  toast('페이지 순서 변경됨');
+}
+
 function initDragSelect() {
   const mainArea = document.getElementById('main-area');
+  const sbEl = document.getElementById('sidebar');
   let dragging = false, sx = 0, sy = 0;
+  let sbDragging = false, sbSy = 0;
   const box = document.getElementById('drag-sel-box');
+
+  // 메인 영역 드래그 선택
   mainArea.addEventListener('mousedown', e => {
-    if (e.button !== 0 || e.ctrlKey) return;
+    if (e.button !== 0 || e.ctrlKey || e.shiftKey) return;
     if (e.target.classList.contains('overlay')) return;
+    if (e.target.closest('.page-sel-bar')) return; // 핸들바 클릭은 별도 처리
     if (!e.target.closest('.page-block')) clearSelection();
     dragging = true; sx = e.clientX; sy = e.clientY;
   });
+
+  // 사이드바 드래그 선택
+  sbEl.addEventListener('mousedown', e => {
+    if (e.button !== 0 || e.ctrlKey || e.shiftKey) return;
+    if (e.target.closest('.thumb-item')) return; // 썸네일 클릭은 별도 처리
+    sbDragging = true; sbSy = e.clientY;
+  });
+
   document.addEventListener('mousemove', e => {
-    if (!dragging) return;
-    const w = Math.abs(e.clientX - sx), h = Math.abs(e.clientY - sy);
-    if (w < 5 && h < 5) return;
-    const x = Math.min(e.clientX, sx), y = Math.min(e.clientY, sy);
-    box.style.cssText = `position:fixed;display:block;left:${x}px;top:${y}px;width:${w}px;height:${h}px;border:1.5px solid var(--accent);background:rgba(255,71,87,.1);pointer-events:none;z-index:150;`;
-    const dr = {left:x, top:y, right:x+w, bottom:y+h};
-    selectedPages.clear();
-    pageData.forEach(pd => {
-      const b = document.getElementById('page-block-' + pd.pageNum);
-      if (!b) return;
-      const br = b.getBoundingClientRect();
-      const hit = !(br.right<dr.left||br.left>dr.right||br.bottom<dr.top||br.top>dr.bottom);
-      b.classList.toggle('selected', hit);
-      if (hit) selectedPages.add(pd.pageNum);
-    });
-    const bar = document.getElementById('sel-bar');
-    if (selectedPages.size > 0) {
-      bar.style.display = 'flex';
-      document.getElementById('sel-count').textContent = selectedPages.size + '페이지 선택됨';
-    } else {
-      bar.style.display = 'none';
+    if (dragging) {
+      const w = Math.abs(e.clientX - sx), h = Math.abs(e.clientY - sy);
+      if (w < 5 && h < 5) return;
+      const x = Math.min(e.clientX, sx), y = Math.min(e.clientY, sy);
+      box.style.cssText = `position:fixed;display:block;left:${x}px;top:${y}px;width:${w}px;height:${h}px;border:1.5px solid var(--accent);background:rgba(255,71,87,.1);pointer-events:none;z-index:150;`;
+      const dr = {left:x, top:y, right:x+w, bottom:y+h};
+      selectedPages.clear();
+      pageData.forEach(pd => {
+        const b = document.getElementById('page-block-' + pd.pageNum);
+        if (!b) return;
+        const br = b.getBoundingClientRect();
+        const hit = !(br.right<dr.left||br.left>dr.right||br.bottom<dr.top||br.top>dr.bottom);
+        b.classList.toggle('selected', hit);
+        if (hit) selectedPages.add(pd.pageNum);
+      });
+      updateThumbSelUI();
+      const bar = document.getElementById('sel-bar');
+      if (selectedPages.size > 0) { bar.style.display='flex'; document.getElementById('sel-count').textContent=selectedPages.size+'페이지 선택됨'; }
+      else bar.style.display='none';
+    }
+    if (sbDragging) {
+      const top = Math.min(e.clientY, sbSy), bottom = Math.max(e.clientY, sbSy);
+      if (Math.abs(e.clientY - sbSy) < 5) return;
+      selectedPages.clear();
+      document.querySelectorAll('.thumb-item').forEach(item => {
+        const br = item.getBoundingClientRect();
+        const hit = !(br.bottom < top || br.top > bottom);
+        const pn = parseInt(item.id.replace('thumb-', ''));
+        item.classList.toggle('selected', hit);
+        if (hit) selectedPages.add(pn);
+      });
+      pageData.forEach(pd => {
+        const b = document.getElementById('page-block-' + pd.pageNum);
+        if (b) b.classList.toggle('selected', selectedPages.has(pd.pageNum));
+      });
+      const bar = document.getElementById('sel-bar');
+      if (selectedPages.size > 0) { bar.style.display='flex'; document.getElementById('sel-count').textContent=selectedPages.size+'페이지 선택됨'; }
+      else bar.style.display='none';
     }
   });
+
   document.addEventListener('mouseup', () => {
-    if (!dragging) return;
-    dragging = false;
-    box.style.display = 'none';
-    updateSelUI();
+    if (dragging) { dragging = false; box.style.display = 'none'; updateSelUI(); }
+    if (sbDragging) { sbDragging = false; updateSelUI(); }
   });
 }
 initDragSelect();
