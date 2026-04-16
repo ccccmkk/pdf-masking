@@ -85,17 +85,25 @@ body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:var
 .page-canvas{display:block;}
 .overlay{position:absolute;top:0;left:0;cursor:crosshair;}
 .page-num{font-size:11px;color:var(--muted);}
-.page-block.selected .page-wrapper{outline:2px solid var(--accent);box-shadow:0 0 0 4px rgba(255,71,87,.2),0 8px 40px rgba(0,0,0,.7);}
-.page-block.selected .page-num{color:var(--accent);font-weight:700;}
-.page-sel-bar{display:flex;align-items:center;gap:6px;padding:4px 8px;cursor:pointer;user-select:none;background:rgba(0,0,0,.04);border-radius:2px 2px 0 0;width:100%;box-sizing:border-box;}
-.page-sel-bar:hover{background:rgba(255,71,87,.1);}
-.page-block.selected .page-sel-bar{background:rgba(255,71,87,.18);}
+.page-block.selected .page-wrapper{outline:2px solid #3b82f6;box-shadow:0 0 0 4px rgba(59,130,246,.2),0 8px 40px rgba(0,0,0,.7);}
+.page-block.selected .page-num{color:#3b82f6;font-weight:700;}
+.page-sel-bar{display:flex;align-items:center;gap:6px;padding:4px 8px;cursor:pointer;user-select:none;background:rgba(0,0,0,.04);border-radius:0 0 2px 2px;width:100%;box-sizing:border-box;}
+.page-sel-bar:hover{background:rgba(59,130,246,.1);}
+.page-block.selected .page-sel-bar{background:rgba(59,130,246,.18);}
 .page-sel-num{font-size:11px;font-weight:600;color:var(--muted);flex:1;text-align:center;}
-.page-block.selected .page-sel-num{color:var(--accent);}
+.page-block.selected .page-sel-num{color:#3b82f6;}
 .drag-handle{font-size:14px;color:var(--muted);cursor:grab;opacity:0.4;line-height:1;}
 .drag-handle:hover{opacity:1;}
-.page-block.drag-over-top{border-top:3px solid var(--accent);}
-.page-block.drag-over-bottom{border-bottom:3px solid var(--accent);}
+.page-block.drag-over-top{border-top:3px solid #3b82f6;}
+.page-block.drag-over-bottom{border-bottom:3px solid #3b82f6;}
+/* 우클릭 컨텍스트 메뉴 */
+#page-ctx-menu{position:fixed;z-index:2000;background:#1a1a24;border:1px solid #3a3a4a;border-radius:8px;padding:4px 0;min-width:160px;box-shadow:0 8px 24px rgba(0,0,0,.6);display:none;}
+#page-ctx-menu.open{display:block;}
+.ctx-item{padding:8px 16px;font-size:12px;font-weight:600;color:#e8e8f0;cursor:pointer;display:flex;align-items:center;gap:8px;white-space:nowrap;}
+.ctx-item:hover{background:rgba(255,255,255,.08);}
+.ctx-item.danger{color:var(--accent);}
+.ctx-item.danger:hover{background:rgba(255,71,87,.12);}
+.ctx-sep{height:1px;background:#2a2a35;margin:3px 0;}
 #sel-bar{background:rgba(255,71,87,.1);border-bottom:1px solid rgba(255,71,87,.3);padding:7px 18px;display:none;align-items:center;gap:8px;position:sticky;top:0;z-index:189;}
 #drag-sel-box{position:fixed;border:1.5px solid var(--accent);background:rgba(255,71,87,.1);pointer-events:none;z-index:150;display:none;}
 #toast{position:fixed;bottom:24px;right:24px;z-index:999;padding:12px 20px;background:var(--panel);border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);transform:translateY(80px);transition:transform .25s ease;pointer-events:none;}
@@ -252,11 +260,18 @@ body.font-large #page-total { font-size: 14px !important; }
   flex-shrink: 0;
 }
 .thumb-item:hover { border-color: var(--muted); }
-.thumb-item.selected { border-color: var(--accent); background: rgba(255,71,87,.1); }
-.thumb-item.selected .thumb-label { color: var(--accent); font-weight: 700; }
-.thumb-item.drag-over-top { box-shadow: 0 -3px 0 var(--accent); }
-.thumb-item.drag-over-bottom { box-shadow: 0 3px 0 var(--accent); }
-.thumb-item.active { border-color: var(--accent); }
+/* 현재 보는 페이지: 주황 테두리 */
+.thumb-item.active { border-color: #f59e0b; box-shadow: 0 0 0 1px #f59e0b44; }
+.thumb-item.active .thumb-label { color: #f59e0b; font-weight: 700; }
+/* 선택된 페이지: 파랑 테두리 + 체크뱃지 */
+.thumb-item.selected { border-color: #3b82f6; background: rgba(59,130,246,.12); }
+.thumb-item.selected .thumb-label { color: #3b82f6; font-weight: 700; }
+.thumb-item.selected::after { content:'✓'; position:absolute;top:3px;right:3px;background:#3b82f6;color:#fff;font-size:9px;font-weight:900;width:14px;height:14px;border-radius:50%;display:flex;align-items:center;justify-content:center;line-height:14px;text-align:center; }
+/* 현재 보면서 선택된 경우: 파랑 우선, 주황 점 표시 */
+.thumb-item.active.selected { border-color: #3b82f6; }
+.thumb-item.active.selected::before { content:''; position:absolute;top:3px;left:3px;width:7px;height:7px;border-radius:50%;background:#f59e0b; }
+.thumb-item.drag-over-top { box-shadow: 0 -3px 0 #3b82f6; }
+.thumb-item.drag-over-bottom { box-shadow: 0 3px 0 #3b82f6; }
 .thumb-canvas { display: block; width: 100%; height: auto; }
 .thumb-label {
   text-align: center;
@@ -423,6 +438,13 @@ document.addEventListener('drop', e => e.preventDefault());
   <button class="btn" onclick="clearSelection()" style="margin-left:auto;">✕ 해제</button>
 </div>
 <div id="drag-sel-box"></div>
+<!-- 우클릭 컨텍스트 메뉴 -->
+<div id="page-ctx-menu">
+  <div class="ctx-item" id="ctx-rotate-l">↺ 왼쪽 90° 회전</div>
+  <div class="ctx-item" id="ctx-rotate-r">↻ 오른쪽 90° 회전</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item danger" id="ctx-delete">🗑 삭제</div>
+</div>
 
 <!-- 설정 모달 -->
 <div id="settings-overlay" onclick="if(event.target===this)closeSettings()">
@@ -734,11 +756,12 @@ async function renderPage(pageNum) {
     if (e.ctrlKey || e.shiftKey) { e.preventDefault(); e.stopPropagation(); handlePageClick(pageNum, e); }
   });
   selBar.addEventListener('click', e => { e.stopPropagation(); handlePageClick(pageNum, e); });
+  selBar.addEventListener('contextmenu', e => window._showCtxMenu && window._showCtxMenu(e, pageNum));
   // 순서 변경 드래그 (핸들에서만 시작)
   selBar.draggable = true;
   selBar.addEventListener('dragstart', e => startDragPage(e, pageNum));
-  block.appendChild(selBar);
   block.appendChild(wrapper);
+  block.appendChild(selBar);
   // 드롭 대상
   block.addEventListener('dragover', e => onDragOverPage(e, pageNum, 'main'));
   block.addEventListener('drop', e => onDropPage(e, pageNum));
@@ -1426,6 +1449,7 @@ async function updateThumbnails() {
       handlePageClick(pd.pageNum, e);
       document.getElementById('page-block-' + pd.pageNum)?.scrollIntoView({behavior:'smooth',block:'start'});
     });
+    item.addEventListener('contextmenu', e => window._showCtxMenu && window._showCtxMenu(e, pd.pageNum));
     // 순서 변경 드래그
     item.draggable = true;
     item.addEventListener('dragstart', e => startDragPage(e, pd.pageNum));
@@ -1743,6 +1767,46 @@ function initDragSelect() {
   });
 }
 initDragSelect();
+
+// ── 우클릭 컨텍스트 메뉴 ──────────────────────────────────────
+(function initCtxMenu() {
+  const menu = document.getElementById('page-ctx-menu');
+  let ctxTargetPage = null;
+
+  function showCtxMenu(e, pageNum) {
+    e.preventDefault();
+    e.stopPropagation();
+    // 우클릭한 페이지가 선택 목록에 없으면 단독 선택
+    if (!selectedPages.has(pageNum)) {
+      selectedPages.clear();
+      selectedPages.add(pageNum);
+      lastSelectedPage = pageNum;
+      updateSelUI();
+    }
+    ctxTargetPage = pageNum;
+    const count = selectedPages.size;
+    document.getElementById('ctx-rotate-l').textContent = count > 1 ? `↺ ${count}페이지 왼쪽 회전` : '↺ 왼쪽 90° 회전';
+    document.getElementById('ctx-rotate-r').textContent = count > 1 ? `↻ ${count}페이지 오른쪽 회전` : '↻ 오른쪽 90° 회전';
+    document.getElementById('ctx-delete').textContent = count > 1 ? `🗑 ${count}페이지 삭제` : '🗑 이 페이지 삭제';
+    // 화면 밖 넘치지 않도록
+    const x = Math.min(e.clientX, window.innerWidth - 180);
+    const y = Math.min(e.clientY, window.innerHeight - 120);
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    menu.classList.add('open');
+  }
+
+  function hideCtxMenu() { menu.classList.remove('open'); }
+
+  document.getElementById('ctx-rotate-l').onclick = () => { hideCtxMenu(); rotateSelected(90); };
+  document.getElementById('ctx-rotate-r').onclick = () => { hideCtxMenu(); rotateSelected(-90); };
+  document.getElementById('ctx-delete').onclick   = () => { hideCtxMenu(); deleteSelected(); };
+  document.addEventListener('click', hideCtxMenu);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') hideCtxMenu(); });
+
+  // 썸네일에 우클릭 등록 (updateThumbnails에서 동적 등록)
+  window._showCtxMenu = showCtxMenu;
+})();
 
 // ── Ctrl+휠 → 앱 줌 연동 ────────────────────────────────────
 document.getElementById('main-area').addEventListener('wheel', e => {
