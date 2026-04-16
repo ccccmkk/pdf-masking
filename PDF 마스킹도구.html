@@ -825,7 +825,7 @@ function setupDrawing(overlay, pageNum) {
     const idx = getIdx();
     if (rect.w < 4 || rect.h < 4) { drawOverlay(idx); return; }
     pageData[idx].rects.push(rect);
-    history.push({pi:idx, ri:pageData[idx].rects.length-1});
+    history.push({type:'mask-add', pi:idx, ri:pageData[idx].rects.length-1});
     updateBtns(); drawOverlay(idx);
     if (sidebarVisible) updateSingleThumb(pageData[idx]);
   };
@@ -846,9 +846,9 @@ function setupDrawing(overlay, pageNum) {
     }
     if (found >= 0) {
       pd.rects.splice(found, 1);
-      history = history.filter(h => !(h.pi===idx && h.ri===found));
+      history = history.filter(h => !(h.type==='mask-add' && h.pi===idx && h.ri===found));
       // history의 ri 인덱스 보정
-      history = history.map(h => h.pi===idx && h.ri>found ? {pi:h.pi, ri:h.ri-1} : h);
+      history = history.map(h => h.type==='mask-add' && h.pi===idx && h.ri>found ? {...h, ri:h.ri-1} : h);
       updateBtns(); drawOverlay(idx);
       if (sidebarVisible) updateSingleThumb(pageData[idx]);
       toast('마스킹 삭제됨');
@@ -937,12 +937,45 @@ document.addEventListener('keydown', e => {
 });
 
 // ── Undo / Clear ──────────────────────────────────────────
-function undo() {
+async function undo() {
   if (!history.length) return;
-  const {pi,ri} = history.pop();
-  pageData[pi].rects.splice(ri,1);
-  drawOverlay(pi); updateBtns(); toast('취소됨');
-  if (sidebarVisible) updateSingleThumb(pageData[pi]);
+  const action = history.pop();
+  if (action.type === 'mask-add') {
+    pageData[action.pi].rects.splice(action.ri, 1);
+    drawOverlay(action.pi);
+    if (sidebarVisible) updateSingleThumb(pageData[action.pi]);
+    toast('마스킹 취소됨');
+  } else if (action.type === 'rotate') {
+    const pd = pageData.find(p => p.pageNum === action.pageNum);
+    if (pd) {
+      pd.rects = action.prevRects;
+      await applyRotationRaw(pd, action.prevRotation);
+      drawOverlay(pageData.indexOf(pd));
+      if (sidebarVisible) updateSingleThumb(pd);
+    }
+    toast('회전 취소됨');
+  } else if (action.type === 'rotate-all') {
+    for (const entry of action.entries) {
+      const pd = pageData.find(p => p.pageNum === entry.pageNum);
+      if (!pd) continue;
+      pd.rects = entry.prevRects;
+      await applyRotationRaw(pd, entry.prevRotation);
+      drawOverlay(pageData.indexOf(pd));
+    }
+    if (sidebarVisible) updateThumbnails();
+    toast('전체 회전 취소됨');
+  } else if (action.type === 'delete') {
+    pageData = [...action.pageDataSnapshot];
+    deletedPageNums = new Set(action.deletedPageNumsBefore);
+    history = [...action.historyBefore];
+    const pagesEl = document.getElementById('pages');
+    pagesEl.innerHTML = '';
+    for (const block of action.blockElements) pagesEl.appendChild(block);
+    updateSelUI();
+    if (sidebarVisible) updateThumbnails();
+    toast('페이지 삭제 취소됨');
+  }
+  updateBtns();
 }
 function clearAll() {
   if (!confirm('모든 마스킹을 삭제하시겠습니까?')) return;
@@ -1079,60 +1112,46 @@ function rotatePage(deg) {
   applyRotationToPd(pd, deg);
 }
 async function rotateAll(deg) {
-  const totalRects = pageData.reduce((s,p)=>s+p.rects.length,0);
-  if (totalRects > 0) {
-    if (!confirm('전체 페이지를 회전하면 모든 마스킹(' + totalRects + '개)이 초기화됩니다.\n계속하시겠습니까?')) return;
-    pageData.forEach(pd => { pd.rects = []; });
-    history = [];
-    updateBtns();
-  }
+  const entries = pageData.map(pd => ({
+    pageNum: pd.pageNum,
+    prevRotation: pd.rotation || 0,
+    prevRects: pd.rects.map(r => ({...r, c: r.c ? [...r.c] : undefined}))
+  }));
+  pageData.forEach(pd => { pd.rects = []; });
+  history.push({type:'rotate-all', entries});
   for (const pd of pageData) {
-    pd.rotation = ((pd.rotation || 0) + deg + 360) % 360;
-    const pdfRotation = (360 - pd.rotation) % 360;
-    const pdfPage = await pdfJsDoc.getPage(pd.pageNum);
-    const viewport = pdfPage.getViewport({scale: SCALE, rotation: pdfRotation});
-    pd.canvas.width = viewport.width; pd.canvas.height = viewport.height;
-    pd.overlay.width = viewport.width; pd.overlay.height = viewport.height;
-    const wrapper = pd.overlay.parentElement;
-    wrapper.style.width = viewport.width + 'px';
-    wrapper.style.height = viewport.height + 'px';
-    await pdfPage.render({canvasContext: pd.canvas.getContext('2d'), viewport}).promise;
-    pd.viewport = viewport;
+    const newRotation = ((pd.rotation || 0) + deg + 360) % 360;
+    await applyRotationRaw(pd, newRotation);
     drawOverlay(pageData.indexOf(pd));
   }
   if (sidebarVisible) updateThumbnails();
-  toast('전체 페이지 ' + (deg > 0 ? '오른쪽' : '왼쪽') + ' 90° 회전 완료');
+  updateBtns();
+  toast('전체 페이지 ' + (deg > 0 ? '오른쪽' : '왼쪽') + ' 90° 회전 완료 (↩취소 가능)');
 }
-async function applyRotationToPd(pd, deg) {
-  const idx = pageData.indexOf(pd);
-  // 마스킹 있으면 경고
-  if (pd.rects.length > 0) {
-    if (!confirm('이 페이지를 회전하면 현재 마스킹(' + pd.rects.length + '개)이 초기화됩니다.\n계속하시겠습니까?')) return;
-    pd.rects = [];
-    history = history.filter(h => h.pi !== idx);
-    updateBtns();
-  }
-  pd.rotation = ((pd.rotation || 0) + deg + 360) % 360;
-  // pdf.js rotation은 반시계 양수이므로 변환
-  const pdfRotation = (360 - pd.rotation) % 360;
+async function applyRotationRaw(pd, rotation) {
+  pd.rotation = rotation;
+  const pdfRotation = (360 - rotation) % 360;
   const pdfPage = await pdfJsDoc.getPage(pd.pageNum);
   const viewport = pdfPage.getViewport({scale: SCALE, rotation: pdfRotation});
-  // canvas/overlay 크기 업데이트
-  pd.canvas.width = viewport.width;
-  pd.canvas.height = viewport.height;
-  pd.overlay.width = viewport.width;
-  pd.overlay.height = viewport.height;
-  // wrapper 크기 업데이트
+  pd.canvas.width = viewport.width; pd.canvas.height = viewport.height;
+  pd.overlay.width = viewport.width; pd.overlay.height = viewport.height;
   const wrapper = pd.overlay.parentElement;
   wrapper.style.width = viewport.width + 'px';
   wrapper.style.height = viewport.height + 'px';
-  // re-render
   await pdfPage.render({canvasContext: pd.canvas.getContext('2d'), viewport}).promise;
   pd.viewport = viewport;
-  drawOverlay(idx);
-  // 썸네일 즉시 업데이트
+}
+async function applyRotationToPd(pd, deg) {
+  const prevRotation = pd.rotation || 0;
+  const prevRects = pd.rects.map(r => ({...r, c: r.c ? [...r.c] : undefined}));
+  if (pd.rects.length > 0) pd.rects = [];
+  history.push({type:'rotate', pageNum: pd.pageNum, prevRotation, prevRects});
+  const newRotation = (prevRotation + deg + 360) % 360;
+  await applyRotationRaw(pd, newRotation);
+  drawOverlay(pageData.indexOf(pd));
   if (sidebarVisible) updateSingleThumb(pd);
-  toast('페이지 ' + pd.pageNum + ' ' + (deg > 0 ? '오른쪽' : '왼쪽') + ' 90° 회전');
+  toast('페이지 ' + pd.pageNum + ' ' + (deg > 0 ? '오른쪽' : '왼쪽') + ' 90° 회전 (↩취소 가능)');
+  updateBtns();
 }
 
 // ── 모달 공통 ────────────────────────────────────────────────
@@ -1314,7 +1333,15 @@ function downloadPDF(bytes, filename) {
 
 function updateBtns() {
   const total = pageData.reduce((s,p)=>s+p.rects.length,0);
-  document.getElementById('undo-btn').disabled = !history.length;
+  const undoBtn = document.getElementById('undo-btn');
+  undoBtn.disabled = !history.length;
+  if (history.length) {
+    const top = history[history.length - 1];
+    const labels = {'mask-add':'↩ 마스킹 취소','rotate':'↩ 회전 취소','rotate-all':'↩ 전체회전 취소','delete':'↩ 삭제 취소'};
+    undoBtn.textContent = labels[top.type] || '↩ 취소';
+  } else {
+    undoBtn.textContent = '↩ 취소';
+  }
   document.getElementById('clear-btn').disabled = !total;
 }
 
@@ -1646,12 +1673,22 @@ async function rotateSelected(deg) {
 async function deleteSelected() {
   if (!selectedPages.size) return;
   if (selectedPages.size >= pageData.length) { toast('모든 페이지는 삭제할 수 없습니다', true); return; }
-  if (!confirm(selectedPages.size + '개 페이지를 삭제하시겠습니까?')) return;
-  const delSet = new Set(pageData.filter(pd => selectedPages.has(pd.pageNum)).map(pd => pageData.indexOf(pd)));
-  const newIdxMap = new Map();
-  let ni = 0;
-  pageData.forEach((pd, i) => { if (!delSet.has(i)) newIdxMap.set(i, ni++); });
-  history = history.filter(h => !delSet.has(h.pi)).map(h => ({pi: newIdxMap.get(h.pi), ri: h.ri}));
+  if (!confirm(selectedPages.size + '개 페이지를 삭제하시겠습니까?\n(↩ 취소로 복구 가능)')) return;
+  // 삭제 전 스냅샷 저장 (undo용)
+  const historyBefore = [...history];
+  const pageDataSnapshot = [...pageData];
+  const blockElements = pageData.map(pd => document.getElementById('page-block-' + pd.pageNum));
+  const deletedPageNumsBefore = new Set(deletedPageNums);
+  // mask-add history 재인덱싱 (삭제 후 유효한 pi 값 유지)
+  const delSet = new Set(pageData.reduce((acc, pd, i) => { if (selectedPages.has(pd.pageNum)) acc.push(i); return acc; }, []));
+  const remainingOldIndices = pageData.reduce((acc, pd, i) => { if (!selectedPages.has(pd.pageNum)) acc.push(i); return acc; }, []);
+  const newIdxMap = new Map(remainingOldIndices.map((oldIdx, newIdx) => [oldIdx, newIdx]));
+  history = history
+    .filter(h => !(h.type === 'mask-add' && delSet.has(h.pi)))
+    .map(h => h.type === 'mask-add' ? {...h, pi: newIdxMap.get(h.pi)} : h);
+  // delete 액션 push
+  history.push({type:'delete', pageDataSnapshot, blockElements, deletedPageNumsBefore, historyBefore});
+  // 실제 삭제
   selectedPages.forEach(pn => {
     const b = document.getElementById('page-block-' + pn);
     if (b) b.remove();
@@ -1662,7 +1699,7 @@ async function deleteSelected() {
   selectedPages.clear();
   updateSelUI(); updateBtns();
   if (sidebarVisible) updateThumbnails();
-  toast(cnt + '개 페이지 삭제됨');
+  toast(cnt + '개 페이지 삭제됨 (↩ 취소로 복구)');
 }
 // ── 페이지 순서 변경 (드래그) ─────────────────────────────────
 function startDragPage(e, pn) {
