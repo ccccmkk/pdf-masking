@@ -1744,6 +1744,13 @@ function initDragSelect() {
 }
 initDragSelect();
 
+// ── Ctrl+휠 → 앱 줌 연동 ────────────────────────────────────
+document.getElementById('main-area').addEventListener('wheel', e => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  changeZoom(e.deltaY < 0 ? 0.2 : -0.2);
+}, { passive: false });
+
 function setStatus(msg) { document.getElementById('status').textContent = msg; }
 let toastTimer;
 function toast(msg, isErr=false, isSuccess=false) {
