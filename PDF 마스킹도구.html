@@ -266,13 +266,11 @@ body.font-large #page-total { font-size: 14px !important; }
   gap: 24px;
   padding: 14px 8px;
 }
-#sidebar-body.two-col {
+.thumb-row {
+  display: flex;
   flex-direction: row;
-  flex-wrap: wrap;
-  row-gap: 20px;
-  column-gap: 6px;
-  align-content: start;
-  align-items: flex-start;
+  gap: 6px;
+  flex-shrink: 0;
 }
 .thumb-item {
   cursor: pointer;
@@ -1341,8 +1339,6 @@ window.addEventListener('load', () => {
 function toggleThumbCols() {
   thumbTwoCols = !thumbTwoCols;
   const sidebar = document.getElementById('sidebar');
-  const body = document.getElementById('sidebar-body');
-  body.classList.toggle('two-col', thumbTwoCols);
   sidebar.style.width = thumbTwoCols ? '280px' : '140px';
   document.getElementById('thumb-cols-btn').textContent = thumbTwoCols ? '2열' : '1열';
   void sidebar.offsetWidth; // 강제 리플로우 → clientWidth 즉시 반영
@@ -1420,55 +1416,68 @@ function getThumbW() {
   if (thumbTwoCols) return Math.max(40, Math.floor((innerW - 6) / 2)); // 6px column-gap
   return Math.max(60, innerW);
 }
+function createThumbItem(pd, thumbW) {
+  const item = document.createElement('div');
+  item.className = 'thumb-item';
+  item.id = 'thumb-' + pd.pageNum;
+  const tc = document.createElement('canvas');
+  tc.className = 'thumb-canvas';
+  const dpr = window.devicePixelRatio || 1;
+  item.style.width = thumbW + 'px';
+  const thumbScale = thumbW / pd.canvas.width;
+  const thumbH = Math.round(pd.canvas.height * thumbScale);
+  tc.width = thumbW * dpr;
+  tc.height = thumbH * dpr;
+  tc.style.width = thumbW + 'px';
+  tc.style.height = thumbH + 'px';
+  const ctx = tc.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.drawImage(pd.canvas, 0, 0, thumbW, thumbH);
+  // 마스킹 오버레이 (canvas 좌표 기준)
+  const ts = thumbW / pd.canvas.width;
+  if (pd.rects.length > 0) {
+    for (const r of pd.rects) {
+      if (r.type === 'mosaic') ctx.fillStyle = 'rgba(128,128,128,0.85)';
+      else { const [rr,gg,bb] = r.c.map(v=>Math.round(v*255)); ctx.fillStyle=`rgb(${rr},${gg},${bb})`; }
+      ctx.fillRect(r.x*ts, r.y*ts, r.w*ts, r.h*ts);
+    }
+  }
+  const label = document.createElement('div');
+  label.className = 'thumb-label';
+  label.textContent = pd.pageNum;
+  item.appendChild(tc);
+  item.appendChild(label);
+  item.classList.toggle('selected', selectedPages.has(pd.pageNum));
+  item.addEventListener('click', e => {
+    handlePageClick(pd.pageNum, e);
+    document.getElementById('page-block-' + pd.pageNum)?.scrollIntoView({behavior:'smooth',block:'start'});
+  });
+  item.addEventListener('contextmenu', e => window._showCtxMenu && window._showCtxMenu(e, pd.pageNum));
+  // 순서 변경 드래그
+  item.draggable = true;
+  item.addEventListener('dragstart', e => startDragPage(e, pd.pageNum));
+  item.addEventListener('dragover', e => onDragOverPage(e, pd.pageNum, 'thumb'));
+  item.addEventListener('drop', e => onDropPage(e, pd.pageNum));
+  item.addEventListener('dragleave', e => { if (!item.contains(e.relatedTarget)) clearDragOverEl(item); });
+  return item;
+}
 async function updateThumbnails() {
   const sb = document.getElementById('sidebar-body');
   if (!sidebarVisible || !pdfJsDoc) return;
   sb.innerHTML = '';
-  for (const pd of pageData) {
-    const item = document.createElement('div');
-    item.className = 'thumb-item';
-    item.id = 'thumb-' + pd.pageNum;
-    const tc = document.createElement('canvas');
-    tc.className = 'thumb-canvas';
-    const dpr = window.devicePixelRatio || 1;
-    const thumbW = getThumbW();
-    item.style.width = thumbW + 'px'; // flex-wrap 정확한 열 분배용
-    const thumbScale = thumbW / pd.canvas.width;
-    const thumbH = Math.round(pd.canvas.height * thumbScale);
-    tc.width = thumbW * dpr;
-    tc.height = thumbH * dpr;
-    tc.style.width = thumbW + 'px';
-    tc.style.height = thumbH + 'px';
-    const ctx = tc.getContext('2d');
-    ctx.scale(dpr, dpr);
-    ctx.drawImage(pd.canvas, 0, 0, thumbW, thumbH);
-    // 마스킹 오버레이 (canvas 좌표 기준)
-    const ts = thumbW / pd.canvas.width;
-    if (pd.rects.length > 0) {
-      for (const r of pd.rects) {
-        if (r.type === 'mosaic') ctx.fillStyle = 'rgba(128,128,128,0.85)';
-        else { const [rr,gg,bb] = r.c.map(v=>Math.round(v*255)); ctx.fillStyle=`rgb(${rr},${gg},${bb})`; }
-        ctx.fillRect(r.x*ts, r.y*ts, r.w*ts, r.h*ts);
-      }
+  const thumbW = getThumbW();
+  if (thumbTwoCols) {
+    for (let i = 0; i < pageData.length; i += 2) {
+      const row = document.createElement('div');
+      row.className = 'thumb-row';
+      row.appendChild(createThumbItem(pageData[i], thumbW));
+      if (i + 1 < pageData.length) row.appendChild(createThumbItem(pageData[i + 1], thumbW));
+      sb.appendChild(row);
     }
-    const label = document.createElement('div');
-    label.className = 'thumb-label';
-    label.textContent = pd.pageNum;
-    item.appendChild(tc);
-    item.appendChild(label);
-    item.classList.toggle('selected', selectedPages.has(pd.pageNum));
-    item.addEventListener('click', e => {
-      handlePageClick(pd.pageNum, e);
-      document.getElementById('page-block-' + pd.pageNum)?.scrollIntoView({behavior:'smooth',block:'start'});
-    });
-    item.addEventListener('contextmenu', e => window._showCtxMenu && window._showCtxMenu(e, pd.pageNum));
-    // 순서 변경 드래그
-    item.draggable = true;
-    item.addEventListener('dragstart', e => startDragPage(e, pd.pageNum));
-    item.addEventListener('dragover', e => onDragOverPage(e, pd.pageNum, 'thumb'));
-    item.addEventListener('drop', e => onDropPage(e, pd.pageNum));
-    item.addEventListener('dragleave', e => { if (!item.contains(e.relatedTarget)) clearDragOverEl(item); });
-    sb.appendChild(item);
+  } else {
+    for (const pd of pageData) {
+      sb.appendChild(createThumbItem(pd, thumbW));
+    }
   }
 }
 
