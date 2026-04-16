@@ -916,11 +916,13 @@ function undo() {
   const {pi,ri} = history.pop();
   pageData[pi].rects.splice(ri,1);
   drawOverlay(pi); updateBtns(); toast('취소됨');
+  if (sidebarVisible) updateSingleThumb(pageData[pi]);
 }
 function clearAll() {
   if (!confirm('모든 마스킹을 삭제하시겠습니까?')) return;
   pageData.forEach((p,i) => { p.rects=[]; drawOverlay(i); });
   history=[]; updateBtns(); toast('전체 삭제됨');
+  if (sidebarVisible) updateThumbnails();
 }
 document.addEventListener('keydown', e => {
   if (e.ctrlKey && e.key==='z') { e.preventDefault(); undo(); }
