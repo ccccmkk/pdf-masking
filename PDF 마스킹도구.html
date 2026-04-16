@@ -1696,16 +1696,16 @@ function reorderPages(fromPn, toPn, insertBefore) {
 
 function initDragSelect() {
   const mainArea = document.getElementById('main-area');
-  const sbEl = document.getElementById('sidebar');
+  const sbEl = document.getElementById('sidebar-body');
   let dragging = false, sx = 0, sy = 0;
-  let sbDragging = false, sbSy = 0;
+  let sbDragging = false, sbSx = 0, sbSy = 0;
   const box = document.getElementById('drag-sel-box');
 
   // 메인 영역 드래그 선택
   mainArea.addEventListener('mousedown', e => {
     if (e.button !== 0 || e.ctrlKey || e.shiftKey) return;
     if (e.target.classList.contains('overlay')) return;
-    if (e.target.closest('.page-sel-bar')) return; // 핸들바 클릭은 별도 처리
+    if (e.target.closest('.page-sel-bar')) return;
     if (!e.target.closest('.page-block')) clearSelection();
     dragging = true; sx = e.clientX; sy = e.clientY;
   });
@@ -1713,8 +1713,8 @@ function initDragSelect() {
   // 사이드바 드래그 선택
   sbEl.addEventListener('mousedown', e => {
     if (e.button !== 0 || e.ctrlKey || e.shiftKey) return;
-    if (e.target.closest('.thumb-item')) return; // 썸네일 클릭은 별도 처리
-    sbDragging = true; sbSy = e.clientY;
+    if (e.target.closest('.thumb-item')) return;
+    sbDragging = true; sbSx = e.clientX; sbSy = e.clientY;
   });
 
   document.addEventListener('mousemove', e => {
@@ -1739,8 +1739,12 @@ function initDragSelect() {
       else bar.style.display='none';
     }
     if (sbDragging) {
-      const top = Math.min(e.clientY, sbSy), bottom = Math.max(e.clientY, sbSy);
-      if (Math.abs(e.clientY - sbSy) < 5) return;
+      const x = Math.min(e.clientX, sbSx), y = Math.min(e.clientY, sbSy);
+      const w = Math.abs(e.clientX - sbSx), h = Math.abs(e.clientY - sbSy);
+      if (w < 4 && h < 4) return;
+      // 드래그 선택 박스 표시
+      box.style.cssText = `position:fixed;display:block;left:${x}px;top:${y}px;width:${w}px;height:${h}px;border:1.5px solid #3b82f6;background:rgba(59,130,246,.12);pointer-events:none;z-index:150;`;
+      const top = y, bottom = y + h;
       selectedPages.clear();
       document.querySelectorAll('.thumb-item').forEach(item => {
         const br = item.getBoundingClientRect();
@@ -1761,7 +1765,7 @@ function initDragSelect() {
 
   document.addEventListener('mouseup', () => {
     if (dragging) { dragging = false; box.style.display = 'none'; updateSelUI(); }
-    if (sbDragging) { sbDragging = false; updateSelUI(); }
+    if (sbDragging) { sbDragging = false; box.style.display = 'none'; updateSelUI(); }
   });
 }
 initDragSelect();
