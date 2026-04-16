@@ -1345,10 +1345,8 @@ function toggleThumbCols() {
   body.classList.toggle('two-col', thumbTwoCols);
   sidebar.style.width = thumbTwoCols ? '280px' : '140px';
   document.getElementById('thumb-cols-btn').textContent = thumbTwoCols ? '2열' : '1열';
-  // 브라우저 레이아웃 완료 후 너비 재계산
-  requestAnimationFrame(() => {
-    if (pageData.length > 0) updateThumbnails();
-  });
+  void sidebar.offsetWidth; // 강제 리플로우 → clientWidth 즉시 반영
+  if (pageData.length > 0) updateThumbnails();
 }
 function toggleSidebar() {
   sidebarVisible = !sidebarVisible;
@@ -1821,8 +1819,8 @@ initDragSelect();
   window._showCtxMenu = showCtxMenu;
 })();
 
-// ── Ctrl+휠 → 앱 줌 연동 ────────────────────────────────────
-document.getElementById('main-area').addEventListener('wheel', e => {
+// ── Ctrl+휠 → 앱 줌 연동 (메인 + 사이드바 모두) ───────────────
+document.getElementById('app-layout').addEventListener('wheel', e => {
   if (!e.ctrlKey) return;
   e.preventDefault();
   changeZoom(e.deltaY < 0 ? 10 : -10);
