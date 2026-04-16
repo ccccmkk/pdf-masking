@@ -1017,24 +1017,23 @@ async function saveAs(targetPages) {
 
 
 
-// ── 스크롤 연동 (현재 보이는 페이지 → 입력창 업데이트) ─────
+// ── 스크롤 연동 (뷰포트 중앙에 가장 가까운 페이지 기준) ────
 function initScrollSync() {
-  const obs = new IntersectionObserver((entries) => {
-    let best = null, bestRatio = 0;
-    entries.forEach(e => {
-      if (e.intersectionRatio > bestRatio) { bestRatio = e.intersectionRatio; best = e.target; }
+  const mainArea = document.getElementById('main-area');
+  function updateCurrentPage() {
+    const areaRect = mainArea.getBoundingClientRect();
+    const viewMid = areaRect.top + areaRect.height / 2;
+    let closestPage = null, minDist = Infinity;
+    pageData.forEach(pd => {
+      const block = document.getElementById('page-block-' + pd.pageNum);
+      if (!block) return;
+      const r = block.getBoundingClientRect();
+      const dist = Math.abs((r.top + r.height / 2) - viewMid);
+      if (dist < minDist) { minDist = dist; closestPage = pd.pageNum; }
     });
-    if (best) {
-      const n = parseInt(best.id.replace('page-block-',''));
-      if (!isNaN(n)) {
-        document.getElementById('page-input').value = n;
-      }
-    }
-  }, {threshold:[0.1,0.3,0.5,0.7,0.9]});
-  pageData.forEach(pd => {
-    const el = document.getElementById('page-block-' + pd.pageNum);
-    if (el) obs.observe(el);
-  });
+    if (closestPage) document.getElementById('page-input').value = closestPage;
+  }
+  mainArea.addEventListener('scroll', updateCurrentPage, {passive: true});
 }
 
 // ── 페이지 회전 ──────────────────────────────────────────────
@@ -1042,6 +1041,7 @@ function getCurrentPageNum() {
   return parseInt(document.getElementById('page-input').value) || 1;
 }
 function rotatePage(deg) {
+  if (selectedPages.size > 0) { rotateSelected(deg); return; }
   const n = getCurrentPageNum();
   const pd = pageData.find(p => p.pageNum === n);
   if (!pd) return;
