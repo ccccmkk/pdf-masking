@@ -11,7 +11,7 @@
   --muted:#8a8aaa; --success:#2ed573; --warn:#ffd32a;
 }
 *{box-sizing:border-box;margin:0;padding:0;}
-body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;user-select:none;}
+body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display:flex;flex-direction:column;user-select:none;}
 #toolbar{position:sticky;top:0;z-index:200;background:var(--panel);border-bottom:1px solid var(--border);padding:10px 18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .logo{font-size:14px;font-weight:700;color:var(--accent);letter-spacing:.05em;white-space:nowrap;}
 .sep{width:1px;height:24px;background:var(--border);flex-shrink:0;}
@@ -229,7 +229,8 @@ body.font-large #page-total { font-size: 14px !important; }
 /* ── 메인 레이아웃: 사이드바 포함 ── */
 #app-layout {
   display: flex;
-  height: calc(100vh - 88px);
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 #main-area {
