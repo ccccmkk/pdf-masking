@@ -271,6 +271,7 @@ body.font-large #page-total { font-size: 14px !important; }
   grid-template-columns: 1fr 1fr;
   gap: 6px;
   align-content: start;
+  align-items: start;
 }
 .thumb-item {
   cursor: pointer;
@@ -1341,13 +1342,7 @@ function toggleThumbCols() {
   const sidebar = document.getElementById('sidebar');
   const body = document.getElementById('sidebar-body');
   body.classList.toggle('two-col', thumbTwoCols);
-  if (thumbTwoCols) {
-    // 메인 영역 최소 220px + 리사이저 8px 확보 후 나머지로 사이드바 결정
-    const maxW = Math.max(160, window.innerWidth - 228);
-    sidebar.style.width = Math.min(280, maxW) + 'px';
-  } else {
-    sidebar.style.width = '140px';
-  }
+  sidebar.style.width = thumbTwoCols ? '280px' : '140px';
   document.getElementById('thumb-cols-btn').textContent = thumbTwoCols ? '2열' : '1열';
   if (pageData.length > 0) updateThumbnails();
 }
