@@ -726,6 +726,8 @@ async function loadPDF(file) {
     toast(pdfJsDoc.numPages + '페이지 로드 완료');
     initScrollSync();
     document.getElementById('zoom-group').style.display = 'flex';
+    cssZoom = 1.0;
+    document.getElementById('pages').style.zoom = 1;
     document.getElementById('zoom-label').textContent = '100%';
     if (sidebarVisible) updateThumbnails();
     setLoading(100); setTimeout(() => setLoading(0), 500);
@@ -774,24 +776,30 @@ async function renderPage(pageNum) {
 }
 
 // ── 드로잉 ───────────────────────────────────────────────
+// CSS 줌 적용 시 canvas 논리픽셀 좌표로 변환
+function toCanvasCoords(e, el) {
+  const r = el.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * (el.width / r.width),
+    y: (e.clientY - r.top)  * (el.height / r.height)
+  };
+}
 function setupDrawing(overlay, idx) {
   let drawing = false, sx = 0, sy = 0;
   overlay.addEventListener('mousedown', e => {
     if (e.button !== 0) return;
     drawing = true;
-    const r = overlay.getBoundingClientRect();
-    sx = e.clientX - r.left; sy = e.clientY - r.top;
+    const p = toCanvasCoords(e, overlay);
+    sx = p.x; sy = p.y;
   });
   overlay.addEventListener('mousemove', e => {
     if (!drawing) return;
-    const r = overlay.getBoundingClientRect();
-    const cx = e.clientX - r.left, cy = e.clientY - r.top;
+    const {x:cx, y:cy} = toCanvasCoords(e, overlay);
     drawOverlay(idx, {x:Math.min(sx,cx), y:Math.min(sy,cy), w:Math.abs(cx-sx), h:Math.abs(cy-sy)});
   });
   const finish = e => {
     if (!drawing) return; drawing = false;
-    const r = overlay.getBoundingClientRect();
-    const cx = e.clientX - r.left, cy = e.clientY - r.top;
+    const {x:cx, y:cy} = toCanvasCoords(e, overlay);
     const rect = {x:Math.min(sx,cx), y:Math.min(sy,cy), w:Math.abs(cx-sx), h:Math.abs(cy-sy), c:[...selColor], type:selType};
     if (rect.w < 4 || rect.h < 4) { drawOverlay(idx); return; }
     pageData[idx].rects.push(rect);
@@ -803,8 +811,7 @@ function setupDrawing(overlay, idx) {
   overlay.addEventListener('mouseleave', e => { if(drawing) finish(e); });
   overlay.addEventListener('contextmenu', e => {
     e.preventDefault();
-    const r = overlay.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const {x:mx, y:my} = toCanvasCoords(e, overlay);
     const pd = pageData[idx];
     // 클릭 좌표가 포함된 rect 찾기 (뒤에서부터 — 나중에 그려진 게 위에 있으므로)
     let found = -1;
@@ -1287,53 +1294,13 @@ function updateBtns() {
   document.getElementById('clear-btn').disabled = !total;
 }
 
-// ── 확대/축소 ────────────────────────────────────────────────
-async function changeZoom(delta) {
-  const newScale = Math.max(0.5, Math.min(4.0, SCALE + delta * BASE_SCALE));
-  SCALE = newScale;
-  const pct = Math.round((SCALE / BASE_SCALE) * 100);
+// ── 확대/축소 (CSS zoom — 재렌더 없음, 마스킹 유지) ──────────
+let cssZoom = 1.0;
+function changeZoom(delta) {
+  cssZoom = Math.max(0.25, Math.min(4.0, cssZoom + delta));
+  const pct = Math.round(cssZoom * 100);
   document.getElementById('zoom-label').textContent = pct + '%';
-  if (!pdfJsDoc) return;
-  setStatus('렌더링 중...');
-  // 마스킹 있으면 경고
-  const total = pageData.reduce((s,p)=>s+p.rects.length,0);
-  if (total > 0 && !confirm('확대/축소 시 마스킹이 초기화됩니다. 계속하시겠습니까?')) {
-    SCALE = SCALE - delta * BASE_SCALE;
-    document.getElementById('zoom-label').textContent = Math.round((SCALE/BASE_SCALE)*100) + '%';
-    return;
-  }
-  // 현재 순서·회전 보존 (삭제된 페이지 제외)
-  const savedOrder = pageData.map(p => ({pageNum: p.pageNum, rotation: p.rotation || 0}));
-  history.length = 0;
-  updateBtns();
-  selectedPages.clear(); updateSelUI();
-  // 전체 재렌더 (저장된 순서 그대로)
-  const pagesEl = document.getElementById('pages');
-  pagesEl.innerHTML = '';
-  pageData = [];
-  for (const {pageNum} of savedOrder) await renderPage(pageNum);
-  // 회전 복원 (마스킹 경고 없이)
-  const savedRotations = Object.fromEntries(savedOrder.map(s => [s.pageNum, s.rotation]));
-  for (const pd of pageData) {
-    const rot = savedRotations[pd.pageNum] || 0;
-    if (rot !== 0) {
-      pd.rotation = rot;
-      const pdfRotation = (360 - rot) % 360;
-      const pdfPage = await pdfJsDoc.getPage(pd.pageNum);
-      const viewport = pdfPage.getViewport({scale: SCALE, rotation: pdfRotation});
-      pd.canvas.width = viewport.width; pd.canvas.height = viewport.height;
-      pd.overlay.width = viewport.width; pd.overlay.height = viewport.height;
-      const wrapper = pd.overlay.parentElement;
-      wrapper.style.width = viewport.width + 'px';
-      wrapper.style.height = viewport.height + 'px';
-      await pdfPage.render({canvasContext: pd.canvas.getContext('2d'), viewport}).promise;
-      pd.viewport = viewport;
-      drawOverlay(pageData.indexOf(pd));
-    }
-  }
-  initScrollSync();
-  updateThumbnails();
-  setStatus('준비');
+  document.getElementById('pages').style.zoom = cssZoom;
 }
 
 // ── 썸네일 사이드바 ──────────────────────────────────────────
@@ -1812,7 +1779,7 @@ initDragSelect();
 document.getElementById('main-area').addEventListener('wheel', e => {
   if (!e.ctrlKey) return;
   e.preventDefault();
-  changeZoom(e.deltaY < 0 ? 0.2 : -0.2);
+  changeZoom(e.deltaY < 0 ? 0.1 : -0.1);
 }, { passive: false });
 
 function setStatus(msg) { document.getElementById('status').textContent = msg; }
