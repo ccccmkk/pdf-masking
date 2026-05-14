@@ -361,6 +361,26 @@ body.font-large #page-total { font-size: 14px !important; }
   font-size: 14px;
   pointer-events: none;
 }
+
+/* ── PDF 순서 모달 ── */
+.pdf-order-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  cursor: grab;
+  transition: border-color .15s, background .15s;
+  user-select: none;
+}
+.pdf-order-item:active { cursor: grabbing; }
+.pdf-order-item.drag-over { border-color: var(--accent); background: rgba(255,71,87,.08); }
+.pdf-order-handle { font-size: 16px; color: var(--muted); cursor: grab; flex-shrink: 0; }
+.pdf-order-num { font-size: 11px; font-weight: 700; color: var(--muted); width: 18px; text-align: center; flex-shrink: 0; }
+.pdf-order-name { flex: 1; font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pdf-order-pages { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; flex-shrink: 0; }
 </style>
 </head>
 <body class="theme-light">
@@ -373,7 +393,7 @@ document.addEventListener('drop', e => e.preventDefault());
 <div id="toolbar">
   <span class="logo">■ PDF MASK</span>
   <label class="file-btn" for="file-input">📂 파일 열기</label>
-  <input type="file" id="file-input" accept=".pdf" style="display:none">
+  <input type="file" id="file-input" accept=".pdf" style="display:none" multiple>
   <div class="sep"></div>
   <div class="color-group">
     <span class="color-label">마스킹 색:</span>
@@ -603,12 +623,30 @@ document.addEventListener('drop', e => e.preventDefault());
   </div>
 </div>
 
+<!-- PDF 순서 지정 모달 -->
+<div class="modal-overlay" id="pdf-order-overlay">
+  <div class="modal-box" style="width:520px;max-width:96vw;">
+    <div class="modal-title">
+      📂 PDF 순서 정하기
+      <button class="modal-close" onclick="cancelPdfOrder()">✕</button>
+    </div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6;">
+      여러 PDF를 아래 순서로 이어 붙입니다. <strong>드래그</strong>로 순서를 바꾼 뒤 <strong>불러오기</strong>를 클릭하세요.
+    </p>
+    <div id="pdf-order-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:18px;max-height:55vh;overflow-y:auto;"></div>
+    <div class="modal-btn-row">
+      <button class="modal-btn" onclick="cancelPdfOrder()">취소</button>
+      <button class="modal-btn primary" onclick="confirmPdfOrder()">✅ 불러오기</button>
+    </div>
+  </div>
+</div>
+
 <div id="app-layout">
   <div id="main-area">
     <div id="drop-zone">
   <div class="icon">📋</div>
   <div class="title">PDF 파일을 선택하거나 드래그하세요</div>
-  <div class="sub">스캔 파일(이미지 PDF) 포함 가능<br>마우스로 드래그해 개인정보 영역을 가립니다</div>
+  <div class="sub">스캔 파일(이미지 PDF) 포함 가능 · 여러 파일 동시 선택 가능<br>마우스로 드래그해 개인정보 영역을 가립니다</div>
 </div><!-- /drop-zone -->
 
 <div id="pages" style="display:none"></div>
@@ -690,10 +728,15 @@ let selectedPages = new Set();
 let deletedPageNums = new Set();
 let lastSelectedPage = null;
 let draggedPageNum = null;
+let pendingFileInfos = []; // 순서 지정 모달용
 
 // ── 파일 로드 ───────────────────────────────────────────
 document.getElementById('file-input').addEventListener('change', e => {
-  if (e.target.files[0]) loadPDF(e.target.files[0]);
+  const files = [...e.target.files].filter(f => f.name.toLowerCase().endsWith('.pdf'));
+  e.target.value = '';
+  if (files.length === 0) return;
+  if (files.length === 1) loadPDF(files[0]);
+  else showPdfOrderModal(files);
 });
 const dropZone = document.getElementById('drop-zone');
 dropZone.addEventListener('click', () => document.getElementById('file-input').click());
@@ -701,9 +744,10 @@ dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classL
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
 dropZone.addEventListener('drop', e => {
   e.preventDefault(); dropZone.classList.remove('drag-over');
-  const f = e.dataTransfer.files[0];
-  if (f && f.name.toLowerCase().endsWith('.pdf')) loadPDF(f);
-  else toast('PDF 파일만 지원됩니다', true);
+  const files = [...e.dataTransfer.files].filter(f => f.name.toLowerCase().endsWith('.pdf'));
+  if (files.length === 0) { toast('PDF 파일만 지원됩니다', true); return; }
+  if (files.length === 1) loadPDF(files[0]);
+  else showPdfOrderModal(files);
 });
 
 function setLoading(pct) { document.getElementById('loading-bar').style.width = pct + '%'; }
@@ -721,8 +765,9 @@ async function loadPDF(file) {
   setStatus('불러오는 중...'); setLoading(10);
   try {
     pdfBytes = await file.arrayBuffer();
+    const srcBytes = new Uint8Array(pdfBytes);
     setLoading(30);
-    const opts = {data: new Uint8Array(pdfBytes)};
+    const opts = {data: new Uint8Array(srcBytes)};
     if (window._pdfWorker) opts.worker = window._pdfWorker;
     pdfJsDoc = await pdfjsLib.getDocument(opts).promise;
     setLoading(60);
@@ -730,9 +775,10 @@ async function loadPDF(file) {
     const pagesEl = document.getElementById('pages');
     pagesEl.style.display = 'flex'; pagesEl.innerHTML = '';
     pageData = []; history = []; selectedPages.clear(); deletedPageNums.clear(); updateBtns();
-    for (let i = 1; i <= pdfJsDoc.numPages; i++) {
-      await renderPage(i);
-      setLoading(60 + Math.round(40 * i / pdfJsDoc.numPages));
+    const totalPages = pdfJsDoc.numPages;
+    for (let i = 1; i <= totalPages; i++) {
+      await renderPage(pdfJsDoc, i, i, totalPages, srcBytes);
+      setLoading(60 + Math.round(40 * i / totalPages));
     }
     document.getElementById('save-split').style.opacity = '1';
     document.getElementById('save-split').style.pointerEvents = 'auto';
@@ -741,10 +787,10 @@ async function loadPDF(file) {
     document.getElementById('helpbar').style.display = 'flex';
     document.getElementById('page-jump').style.display = 'flex';
     document.getElementById('rotate-group').style.display = 'flex';
-    document.getElementById('page-input').max = pdfJsDoc.numPages;
-    document.getElementById('page-total').textContent = '/ ' + pdfJsDoc.numPages;
-    setStatus(pdfJsDoc.numPages + '페이지 로드 완료');
-    toast(pdfJsDoc.numPages + '페이지 로드 완료');
+    document.getElementById('page-input').max = totalPages;
+    document.getElementById('page-total').textContent = '/ ' + totalPages;
+    setStatus(totalPages + '페이지 로드 완료');
+    toast(totalPages + '페이지 로드 완료');
     initScrollSync();
     document.getElementById('zoom-group').style.display = 'flex';
     cssZoom = 1.0;
@@ -758,10 +804,10 @@ async function loadPDF(file) {
   }
 }
 
-async function renderPage(pageNum) {
-  const pdfPage = await pdfJsDoc.getPage(pageNum);
+async function renderPage(pdfDocArg, origPageNum, displayPageNum, totalDisplayPages, srcBytes) {
+  const pdfPage = await pdfDocArg.getPage(origPageNum);
   const viewport = pdfPage.getViewport({scale: SCALE});
-  const block = document.createElement('div'); block.className = 'page-block'; block.id = 'page-block-' + pageNum;
+  const block = document.createElement('div'); block.className = 'page-block'; block.id = 'page-block-' + displayPageNum;
   const wrapper = document.createElement('div'); wrapper.className = 'page-wrapper';
   wrapper.style.cssText = 'width:' + viewport.width + 'px;height:' + viewport.height + 'px';
   const canvas = document.createElement('canvas');
@@ -774,25 +820,25 @@ async function renderPage(pageNum) {
   // 선택/순서변경 핸들바
   const selBar = document.createElement('div');
   selBar.className = 'page-sel-bar';
-  selBar.innerHTML = '<span class="drag-handle" title="드래그하여 순서 변경">⠿</span><span class="page-sel-num">' + pageNum + ' / ' + pdfJsDoc.numPages + '</span>';
+  selBar.innerHTML = '<span class="drag-handle" title="드래그하여 순서 변경">⠿</span><span class="page-sel-num">' + displayPageNum + ' / ' + totalDisplayPages + '</span>';
   selBar.addEventListener('mousedown', e => {
-    if (e.ctrlKey || e.shiftKey) { e.preventDefault(); e.stopPropagation(); handlePageClick(pageNum, e); }
+    if (e.ctrlKey || e.shiftKey) { e.preventDefault(); e.stopPropagation(); handlePageClick(displayPageNum, e); }
   });
-  selBar.addEventListener('click', e => { e.stopPropagation(); handlePageClick(pageNum, e); });
-  selBar.addEventListener('contextmenu', e => window._showCtxMenu && window._showCtxMenu(e, pageNum));
+  selBar.addEventListener('click', e => { e.stopPropagation(); handlePageClick(displayPageNum, e); });
+  selBar.addEventListener('contextmenu', e => window._showCtxMenu && window._showCtxMenu(e, displayPageNum));
   // 순서 변경 드래그 (핸들에서만 시작)
   selBar.draggable = true;
-  selBar.addEventListener('dragstart', e => startDragPage(e, pageNum));
+  selBar.addEventListener('dragstart', e => startDragPage(e, displayPageNum));
   block.appendChild(wrapper);
   block.appendChild(selBar);
   // 드롭 대상
-  block.addEventListener('dragover', e => onDragOverPage(e, pageNum, 'main'));
-  block.addEventListener('drop', e => onDropPage(e, pageNum));
+  block.addEventListener('dragover', e => onDragOverPage(e, displayPageNum, 'main'));
+  block.addEventListener('drop', e => onDropPage(e, displayPageNum));
   block.addEventListener('dragleave', e => { if (!block.contains(e.relatedTarget)) clearDragOverEl(block); });
   document.getElementById('pages').appendChild(block);
   await pdfPage.render({canvasContext: canvas.getContext('2d'), viewport}).promise;
-  pageData.push({canvas, overlay, rects:[], pageNum, viewport, rotation:0});
-  setupDrawing(overlay, pageNum);
+  pageData.push({canvas, overlay, rects:[], pageNum:displayPageNum, viewport, rotation:0, pdfDoc:pdfDocArg, origPageNum, srcBytes});
+  setupDrawing(overlay, displayPageNum);
 }
 
 // ── 드로잉 ───────────────────────────────────────────────
@@ -1014,25 +1060,27 @@ async function reloadWithBaked(bytes) {
   // 마스킹/히스토리 초기화
   pageData = []; history = []; selectedPages.clear(); deletedPageNums.clear();
   pdfBytes = bytes.buffer || bytes;
+  const srcBytes = new Uint8Array(bytes);
 
   // pdf.js로 새 문서 로드
-  const opts = { data: new Uint8Array(bytes) };
+  const opts = { data: new Uint8Array(srcBytes) };
   if (window._pdfWorker) opts.worker = window._pdfWorker;
   pdfJsDoc = await pdfjsLib.getDocument(opts).promise;
 
   // 페이지 재렌더
   const pagesEl = document.getElementById('pages');
   pagesEl.innerHTML = '';
-  for (let i = 1; i <= pdfJsDoc.numPages; i++) {
-    await renderPage(i);
+  const totalPages = pdfJsDoc.numPages;
+  for (let i = 1; i <= totalPages; i++) {
+    await renderPage(pdfJsDoc, i, i, totalPages, srcBytes);
   }
   updateBtns();
   initScrollSync();
   if (sidebarVisible) updateThumbnails();
 
   // 페이지 이동 업데이트
-  document.getElementById('page-input').max = pdfJsDoc.numPages;
-  document.getElementById('page-total').textContent = '/ ' + pdfJsDoc.numPages;
+  document.getElementById('page-input').max = totalPages;
+  document.getElementById('page-total').textContent = '/ ' + totalPages;
 }
 
 async function saveAs(targetPages) {
@@ -1131,7 +1179,7 @@ async function rotateAll(deg) {
 async function applyRotationRaw(pd, rotation) {
   pd.rotation = rotation;
   const pdfRotation = (360 - rotation) % 360;
-  const pdfPage = await pdfJsDoc.getPage(pd.pageNum);
+  const pdfPage = await pd.pdfDoc.getPage(pd.origPageNum);
   const viewport = pdfPage.getViewport({scale: SCALE, rotation: pdfRotation});
   pd.canvas.width = viewport.width; pd.canvas.height = viewport.height;
   pd.overlay.width = viewport.width; pd.overlay.height = viewport.height;
@@ -1164,6 +1212,7 @@ function closeModal(id) {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeModal('pagerange');
+    if (document.getElementById('pdf-order-overlay').classList.contains('open')) cancelPdfOrder();
   }
 });
 
@@ -1191,7 +1240,7 @@ function parsePageRange(str, total) {
 // ── 페이지 범위 저장 ─────────────────────────────────────────
 async function saveWithPageRange() {
   const str = document.getElementById('pagerange-input').value;
-  const pages = parsePageRange(str, pdfJsDoc.numPages);
+  const pages = parsePageRange(str, pageData.length);
   if (pages.length === 0) { toast('유효한 페이지가 없습니다', true); return; }
   closeModal('pagerange');
   setStatus('저장 중...');
@@ -1207,35 +1256,33 @@ async function saveWithPageRange() {
 // ── PDF 생성 공통 (보안/텍스트 모드 + 페이지 목록 + 회전) ────
 async function buildPDF(targetPages) {
   if (saveMode === 'text') {
-    const doc = await PDFDocument.load(pdfBytes);
-    // 불필요한 페이지 제거 (뒤에서부터)
-    const totalPages = doc.getPageCount();
-    for (let i = totalPages - 1; i >= 0; i--) {
-      if (!targetPages.includes(i+1)) doc.removePage(i);
-    }
-    // 마스킹 적용
-    const remainPages = doc.getPages();
-    let ri = 0;
+    // 고급 모드: 원본 텍스트 레이어 유지, 각 페이지의 원본 PDF에서 복사
+    const newDoc = await PDFDocument.create();
+    const docCache = new Map();
     for (const pn of targetPages) {
       const pd = pageData.find(p => p.pageNum === pn);
-      const page = remainPages[ri++];
-      if (pd) {
-        // 회전 반영 (re-render로 이미 적용됨, 텍스트 모드에선 pdf-lib에도 적용)
-        if (pd.rotation) {
-          try { page.setRotation(PDFLib.degrees(pd.rotation)); } catch(e) {}
-        }
-        const {width:pW, height:pH} = page.getSize();
-        const cW=pd.viewport.width, cH=pd.viewport.height;
-        for (const r of pd.rects) {
-          const x=r.x*(pW/cW), yTop=r.y*(pH/cH);
-          const w=r.w*(pW/cW), h=r.h*(pH/cH);
-          const y=pH-yTop-h;
-          if (r.type==='mosaic') page.drawRectangle({x,y,width:w,height:h,color:rgb(0.5,0.5,0.5),opacity:1});
-          else page.drawRectangle({x,y,width:w,height:h,color:rgb(r.c[0],r.c[1],r.c[2]),opacity:1});
-        }
+      if (!pd) continue;
+      if (!docCache.has(pd.srcBytes)) {
+        docCache.set(pd.srcBytes, await PDFDocument.load(pd.srcBytes));
+      }
+      const srcDoc = docCache.get(pd.srcBytes);
+      const [copiedPage] = await newDoc.copyPages(srcDoc, [pd.origPageNum - 1]);
+      newDoc.addPage(copiedPage);
+      const page = newDoc.getPages()[newDoc.getPageCount() - 1];
+      if (pd.rotation) {
+        try { page.setRotation(PDFLib.degrees(pd.rotation)); } catch(e) {}
+      }
+      const {width:pW, height:pH} = page.getSize();
+      const cW=pd.viewport.width, cH=pd.viewport.height;
+      for (const r of pd.rects) {
+        const x=r.x*(pW/cW), yTop=r.y*(pH/cH);
+        const w=r.w*(pW/cW), h=r.h*(pH/cH);
+        const y=pH-yTop-h;
+        if (r.type==='mosaic') page.drawRectangle({x,y,width:w,height:h,color:rgb(0.5,0.5,0.5),opacity:1});
+        else page.drawRectangle({x,y,width:w,height:h,color:rgb(r.c[0],r.c[1],r.c[2]),opacity:1});
       }
     }
-    return await doc.save();
+    return await newDoc.save();
   } else {
     // 보안 모드: 이미지 변환
     const doc = await PDFDocument.create();
@@ -1287,7 +1334,7 @@ async function buildPDF(targetPages) {
 
 function jumpToPage() {
   const n = parseInt(document.getElementById('page-input').value);
-  if (!n || n < 1 || n > pdfJsDoc.numPages) {
+  if (!n || n < 1 || n > pageData.length) {
     toast('유효한 페이지 번호를 입력하세요', true);
     return;
   }
@@ -1490,7 +1537,7 @@ function createThumbItem(pd, thumbW) {
 }
 async function updateThumbnails() {
   const sb = document.getElementById('sidebar-body');
-  if (!sidebarVisible || !pdfJsDoc) return;
+  if (!sidebarVisible || !pageData.length) return;
   sb.innerHTML = '';
   const thumbW = getThumbW();
   if (thumbTwoCols) {
@@ -1871,6 +1918,133 @@ document.getElementById('app-layout').addEventListener('wheel', e => {
   e.preventDefault();
   changeZoom(e.deltaY < 0 ? 10 : -10);
 }, { passive: false });
+
+// ── PDF 순서 지정 모달 ──────────────────────────────────────
+function showPdfOrderModal(files) {
+  pendingFileInfos = files.map(f => ({file: f, name: f.name, numPages: null}));
+  renderPdfOrderList();
+  document.getElementById('pdf-order-overlay').classList.add('open');
+  // 비동기로 페이지 수 로드
+  pendingFileInfos.forEach(async (info, idx) => {
+    try {
+      const buf = await info.file.arrayBuffer();
+      const doc = await pdfjsLib.getDocument({data: new Uint8Array(buf)}).promise;
+      pendingFileInfos[idx].numPages = doc.numPages;
+    } catch(e) {
+      pendingFileInfos[idx].numPages = '?';
+    }
+    renderPdfOrderList();
+  });
+}
+
+function renderPdfOrderList() {
+  const list = document.getElementById('pdf-order-list');
+  list.innerHTML = '';
+  pendingFileInfos.forEach((info, idx) => {
+    const item = document.createElement('div');
+    item.className = 'pdf-order-item';
+    item.draggable = true;
+    item.dataset.idx = idx;
+    item.innerHTML =
+      '<span class="pdf-order-handle">⠿</span>' +
+      '<span class="pdf-order-num">' + (idx + 1) + '</span>' +
+      '<span class="pdf-order-name" title="' + info.name + '">' + info.name + '</span>' +
+      '<span class="pdf-order-pages">' + (info.numPages !== null ? info.numPages + '페이지' : '…') + '</span>';
+    item.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', String(idx));
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    item.addEventListener('dragover', e => {
+      e.preventDefault();
+      document.querySelectorAll('.pdf-order-item').forEach(el => el.classList.remove('drag-over'));
+      item.classList.add('drag-over');
+      e.dataTransfer.dropEffect = 'move';
+    });
+    item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
+    item.addEventListener('drop', e => {
+      e.preventDefault();
+      item.classList.remove('drag-over');
+      const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+      const toIdx = parseInt(item.dataset.idx);
+      if (fromIdx === toIdx) return;
+      const [moved] = pendingFileInfos.splice(fromIdx, 1);
+      pendingFileInfos.splice(toIdx, 0, moved);
+      renderPdfOrderList();
+    });
+    list.appendChild(item);
+  });
+}
+
+function cancelPdfOrder() {
+  document.getElementById('pdf-order-overlay').classList.remove('open');
+  pendingFileInfos = [];
+}
+
+async function confirmPdfOrder() {
+  document.getElementById('pdf-order-overlay').classList.remove('open');
+  const files = pendingFileInfos.map(i => i.file);
+  pendingFileInfos = [];
+  await loadMultiplePDFs(files);
+}
+
+async function loadMultiplePDFs(files) {
+  const total = pageData.reduce((s,p)=>s+p.rects.length, 0);
+  if (total > 0) {
+    if (!confirm('현재 마스킹 작업(' + total + '개)이 저장되지 않았습니다.\n계속하시겠습니까?')) return;
+  }
+  setStatus('불러오는 중...'); setLoading(5);
+  try {
+    const pdfDataList = [];
+    for (let fi = 0; fi < files.length; fi++) {
+      const buf = await files[fi].arrayBuffer();
+      const srcBytes = new Uint8Array(buf);
+      const opts = {data: new Uint8Array(srcBytes)};
+      if (window._pdfWorker) opts.worker = window._pdfWorker;
+      const pdfDoc = await pdfjsLib.getDocument(opts).promise;
+      pdfDataList.push({pdfDoc, srcBytes});
+      setLoading(5 + Math.round(25 * (fi + 1) / files.length));
+    }
+    const totalPages = pdfDataList.reduce((s, d) => s + d.pdfDoc.numPages, 0);
+    originalFileName = files.map(f => f.name.replace(/\.pdf$/i, '')).join('+');
+    pdfJsDoc = null; pdfBytes = null;
+
+    dropZone.style.display = 'none';
+    const pagesEl = document.getElementById('pages');
+    pagesEl.style.display = 'flex'; pagesEl.innerHTML = '';
+    pageData = []; history = []; selectedPages.clear(); deletedPageNums.clear(); updateBtns();
+
+    let pageCounter = 0;
+    for (const {pdfDoc, srcBytes} of pdfDataList) {
+      for (let i = 1; i <= pdfDoc.numPages; i++) {
+        pageCounter++;
+        await renderPage(pdfDoc, i, pageCounter, totalPages, srcBytes);
+        setLoading(30 + Math.round(70 * pageCounter / totalPages));
+      }
+    }
+
+    document.getElementById('save-split').style.opacity = '1';
+    document.getElementById('save-split').style.pointerEvents = 'auto';
+    document.getElementById('print-btn').disabled = false;
+    document.getElementById('clear-btn').disabled = false;
+    document.getElementById('helpbar').style.display = 'flex';
+    document.getElementById('page-jump').style.display = 'flex';
+    document.getElementById('rotate-group').style.display = 'flex';
+    document.getElementById('page-input').max = totalPages;
+    document.getElementById('page-total').textContent = '/ ' + totalPages;
+    setStatus(files.length + '개 파일 · 총 ' + totalPages + '페이지 로드 완료');
+    toast(files.length + '개 PDF, 총 ' + totalPages + '페이지 로드 완료');
+    initScrollSync();
+    document.getElementById('zoom-group').style.display = 'flex';
+    cssZoom = 1.0;
+    document.getElementById('pages').style.zoom = 1;
+    document.getElementById('zoom-label').textContent = '100%';
+    if (sidebarVisible) updateThumbnails();
+    setLoading(100); setTimeout(() => setLoading(0), 500);
+  } catch(e) {
+    toast('PDF 로드 실패: ' + e.message, true);
+    setStatus('오류'); setLoading(0);
+  }
+}
 
 function setStatus(msg) { document.getElementById('status').textContent = msg; }
 let toastTimer;
